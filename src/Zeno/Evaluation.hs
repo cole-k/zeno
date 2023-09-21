@@ -131,10 +131,10 @@ evaluateToCase
 evaluate :: [ZEquality] -> ZExpr -> ZExpr
 evaluate facts = flip runReader facts . evaluateR
 
-evaluateR :: MonadReader [ZEquality] m => ZExpr -> m ZExpr
+evaluateR :: (MonadFail m, MonadReader [ZEquality] m) => ZExpr -> m ZExpr
 evaluateR = mapExprM (liftM derivingTerm . evaluateExpr)
 
-evaluateExpr :: MonadReader [ZEquality] m => ZExpr -> m [ZExpr]
+evaluateExpr :: (MonadFail m, MonadReader [ZEquality] m) => ZExpr -> m [ZExpr]
 evaluateExpr expr@(Var var) = return $
   case varClass var of
     DefinedVar (Just def) _ -> [def, expr]

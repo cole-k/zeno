@@ -3,7 +3,7 @@ module Zeno.Isabellable.Core ()
 where
 
 import Prelude ()
-import Zeno.Prelude
+import Zeno.Prelude hiding (Alt)
 import Zeno.Core
 import Zeno.Isabellable.Class
 

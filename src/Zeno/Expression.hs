@@ -16,7 +16,7 @@ module Zeno.Expression (
 ) where
 
 import Prelude ()
-import Zeno.Prelude
+import Zeno.Prelude hiding (Alt)
 import Zeno.Id
 import Zeno.Traversing
 import Zeno.Utils

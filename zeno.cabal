@@ -38,7 +38,7 @@ executable zeno
   ghc-options:    -funbox-strict-fields -threaded -feager-blackholing
   
   if impl(ghc >= 7)
-    ghc-options:  -with-rtsopts="-N"
+    ghc-options:  -with-rtsopts=-N
     
   other-modules:  Zeno.Checker,
                   Zeno.Clause,

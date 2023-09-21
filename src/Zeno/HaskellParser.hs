@@ -1,4 +1,4 @@
-{-# LANGUAGE DoRec #-}
+{-# LANGUAGE RecursiveDo #-}
 
 -- |The title of this module is pretty self explanatory.
 -- Uses the GHC API to get GHC Core syntax and parses this into 'Expr's and 'DataTypes'
@@ -8,7 +8,7 @@ module Zeno.HaskellParser (
 ) where
 
 import Prelude ()
-import Zeno.Prelude
+import Zeno.Prelude hiding (Alt)
 import Zeno.Core
 import Zeno.Evaluation
 
@@ -33,6 +33,9 @@ import qualified HscMain as Hs
 import qualified Coercion as Hs
 import qualified TidyPgm as Hs
 import qualified Digraph as Hs
+import qualified DataCon as Hs
+import qualified GHC as Hs
+import qualified Pair as Hs
 
 data HsEnv = HsEnv  { envVars :: Map (Either String Hs.Var) ZVar,
                       envTypes :: Map (Either String Hs.Type) ZType }
@@ -40,17 +43,19 @@ data HsEnv = HsEnv  { envVars :: Map (Either String Hs.Var) ZVar,
 emptyEnv :: HsEnv
 emptyEnv = HsEnv    { envVars = mempty,
                       envTypes = mempty }
-                      
+
 type HsZeno = StateT HsEnv (State ZProgram)
 type HsExpr = Hs.Expr Hs.Var
 type HsBinding = (Hs.Var, HsExpr)
 type HsBindings = Hs.Bind Hs.Var
 
 instance Eq Hs.Type where
-  (==) = Hs.tcEqType
+  (==) = Hs.eqType
                      
 instance Ord Hs.Type where
-  compare = Hs.tcCmpType
+  -- NOTE C.K. There doesn't seem to be a cmpType anymore? Maybe it was always
+  -- nondet?
+  compare = Hs.nonDetCmpType
   
 instance WithinTraversable (Hs.Expr a) (Hs.Expr a) where
   mapWithinM f (Hs.App x y) = 
@@ -61,8 +66,9 @@ instance WithinTraversable (Hs.Expr a) (Hs.Expr a) where
     f =<< Hs.Lam x `liftM` mapWithinM f expr
   mapWithinM f (Hs.Cast expr coer) = 
     f =<< (flip Hs.Cast coer) `liftM` mapWithinM f expr
-  mapWithinM f (Hs.Note note expr) = 
-    f =<< Hs.Note note `liftM` mapWithinM f expr
+  -- NOTE C.K. Pretty sure that Note -> Tick
+  mapWithinM f (Hs.Tick note expr) =
+    f =<< Hs.Tick note `liftM` mapWithinM f expr
   mapWithinM f (Hs.Case expr b t alts) =
     f =<< Hs.Case `liftM` mapWithinM f expr `ap` 
       return b `ap` return t `ap` mapM traverseAlt alts
@@ -110,7 +116,8 @@ loadHaskell zflags = do
     Hs.setSessionDynFlags flags'
   
   runGhc :: Hs.Ghc a -> IO a
-  runGhc = Hs.defaultErrorHandler Hs.defaultDynFlags 
+  -- NOTE C.K. Not sure what to put for FlushOut
+  runGhc = Hs.defaultErrorHandler Hs.defaultFatalMessager Hs.defaultFlushOut
          . Hs.runGhc (Just Paths.libdir)
 
 summaryToModule :: Hs.ModSummary -> Hs.Ghc Hs.ModGuts
@@ -122,11 +129,19 @@ summaryToModule = Hs.parseModule
 simplifyModule :: Hs.ModGuts -> Hs.Ghc Hs.CoreModule
 simplifyModule guts = do
   hsc_env <- Hs.getSession
-  simpl_guts <- Hs.hscSimplify guts
-  (cg, md) <- Hs.liftIO $ Hs.tidyProgram hsc_env simpl_guts
-  return $ Hs.CoreModule 
-    { Hs.cm_module = Hs.cg_module cg,    Hs.cm_types = Hs.md_types md,
-      Hs.cm_imports = Hs.cg_dir_imps cg, Hs.cm_binds = Hs.cg_binds cg }
+  -- NOTE C.K. Putting [] for the plugins... not sure if this is right
+  simpl_guts <- liftIO $ Hs.hscSimplify hsc_env [] guts
+  (cg, md) <- liftIO $ Hs.tidyProgram hsc_env simpl_guts
+  return $ Hs.CoreModule
+    -- NOTE C.K. it doesn't seem like it's used, so I commented out the
+    -- cm_imports because that is clearly an API breaking change and I added
+    -- random crap for the cm_safe.
+    { Hs.cm_module = Hs.cg_module cg,
+      Hs.cm_types = Hs.md_types md,
+      -- Hs.cm_imports = Hs.cg_dir_imps cg,
+      Hs.cm_binds = Hs.cg_binds cg,
+      Hs.cm_safe = Hs.Sf_Ignore
+    }
   
 loadModule :: Hs.CoreModule -> HsZeno ()
 loadModule core_mod = {- trace (output . Hs.cm_binds $ core_mod) $ -} do
@@ -215,7 +230,7 @@ addEnvType type_name ztype = modify $ \env ->
   env { envTypes = Map.insert type_name ztype (envTypes env) }
  
 output :: Outputable a => a -> String
-output = showPpr --show . flip ppr defaultUserStyle 
+output = showPpr Hs.unsafeGlobalDynFlags --show . flip ppr defaultUserStyle
   
 outputName :: Outputable a => a -> String
 outputName = output --stripEndNumber . stripModuleName . output
@@ -392,6 +407,7 @@ removeTypeClassPita7 bs = [bs]
 convertBinds :: Bool -> [HsBinding] -> HsZeno [ZBinding]
 convertBinds rc (unzip -> (hsvars, hsexprs)) = do
   vars <- mapM (flip createHsEnvVar (DefinedVar Nothing rc)) hsvars
+  mapM_ (\e -> trace (output e) (pure ())) hsexprs
   exprs <- mapM convertExpr hsexprs
   return (vars `zip` exprs)
       
@@ -411,7 +427,7 @@ createHsEnvVar hs_var var_cls = do
   return new_var
   
 convertExpr :: HsExpr -> HsZeno ZExpr
-convertExpr (Hs.Note _ rhs) = convertExpr rhs
+convertExpr (Hs.Tick _ rhs) = convertExpr rhs
 convertExpr (Hs.Var hsvar) = do
   var <- lookupVar hsvar
   return $ case varClass var of
@@ -446,7 +462,7 @@ convertExpr (Hs.Cast rhs coer) = do
       _ -> 
         return rhs'
   where
-  (coer_l, coer_r) = Hs.coercionKind coer
+  (coer_l, coer_r) = Hs.unPair $ Hs.coercionKind coer
 convertExpr (Hs.Type _) = error 
   $ "Tried parsing a Type from the GHC core syntax. These should have been removed"
   ++ " beforehand so this is a bug in Zeno."
@@ -506,7 +522,8 @@ convertDataCons cons = do
 
     createDataConVar :: [PolyTypeVar] -> Hs.DataCon -> HsZeno ZVar
     createDataConVar poly_vars con = do
-      mapM_ addTyVar (Hs.dataConAllTyVars con)
+      -- NOTE C.K. Not sure if user type variables are needed here
+      mapM_ addTyVar (Hs.dataConUnivAndExTyCoVars con)
       con_type <- (fromJustT . convertCoreType . Hs.dataConUserType) con
       type_args <- fromJustT
         . fmap (tail . flattenAppType) 

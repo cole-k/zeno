@@ -14,7 +14,7 @@ module Zeno.Var (
 ) where
 
 import Prelude ()
-import Zeno.Prelude
+import Zeno.Prelude hiding (Alt)
 import Zeno.DataType
 import Zeno.Type
 import Zeno.Id

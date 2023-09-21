@@ -21,7 +21,7 @@ module Zeno.Core (
 ) where
 
 import Prelude ()
-import Zeno.Prelude
+import Zeno.Prelude hiding (Alt)
 import Zeno.Type
 import Zeno.Expression
 import Zeno.Clause

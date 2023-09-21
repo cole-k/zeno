@@ -21,18 +21,20 @@ data Unification n a
 class Unifiable a where
   type Names a
   unify :: a -> a -> Unification (Names a) a
+
+instance (Ord a, Eq b) => Semigroup (Unification a b) where
+  NoUnifier <> _ = NoUnifier
+  _ <> NoUnifier = NoUnifier
+  (Unifier left) <> (Unifier right)
+    | and (Map.elems inter) = Unifier (Map.union left right)
+    | otherwise = NoUnifier
+    where inter = Map.intersectionWith (==) left right
   
 -- |Appending two unifiers will create a unifier that will
 -- perform both unifications, if such a unifier is still valid.
 instance (Ord a, Eq b) => Monoid (Unification a b) where
   mempty = Unifier mempty
-
-  mappend NoUnifier _ = NoUnifier
-  mappend _ NoUnifier = NoUnifier
-  mappend (Unifier left) (Unifier right)
-    | and (Map.elems inter) = Unifier (Map.union left right)
-    | otherwise = NoUnifier
-    where inter = Map.intersectionWith (==) left right
+  mappend = (<>)
  
 -- |This is like 'catMaybes'
 mergeUnifiers :: [Unification a b] -> [Substitution a b]

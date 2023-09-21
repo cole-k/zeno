@@ -1,3 +1,5 @@
+{-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE InstanceSigs #-}
 -- |A load of random stuff from various Haskell projects, 
 -- most of this is unused by Zeno.
 module Zeno.Utils where
@@ -39,13 +41,23 @@ nubAndDifference xs ys = Set.toList $
 newtype EndoKleisli m a b = 
   EndoKleisli { runEndoKleisli :: (a -> m a, b) }
 
+instance (Monad m, Monoid b) => Semigroup (EndoKleisli m a b) where
+  (EndoKleisli (f, a)) <> (EndoKleisli (g, b)) =
+    EndoKleisli (f >=> g, a `mappend` b)
+
 instance (Monad m, Monoid b) => Monoid (EndoKleisli m a b) where
   mempty = EndoKleisli (return, mempty)
-  (EndoKleisli (f, a)) `mappend` (EndoKleisli (g, b)) = 
-    EndoKleisli (f >=> g, a `mappend` b)
-  
+  mappend = (<>)
+
+instance Monad m => Functor (EndoKleisli m a) where
+  fmap f (EndoKleisli (g, a)) = EndoKleisli (g, f a)
+
+instance Monad m => Applicative (EndoKleisli m a) where
+  pure x = EndoKleisli (pure, x)
+  (EndoKleisli (f, f')) <*> (EndoKleisli (g, a)) = EndoKleisli (f >=> g, f' a)
+
 instance Monad m => Monad (EndoKleisli m a) where
-  return x = EndoKleisli (return, x)
+  return = pure
   (EndoKleisli (f, a)) >>= g = 
     let EndoKleisli (h, b) = g a in EndoKleisli (f >=> h, b)
   

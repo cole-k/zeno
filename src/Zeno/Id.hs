@@ -24,10 +24,13 @@ instance IdCounter Id where
  
 instance Show Id where
   show = idToChars
+
+instance Semigroup Id where
+  (<>) = error "Why would you do this?"
   
 instance Monoid Id where
   mempty = firstId
-  mappend = error "Why would you do this?"
+  mappend = (<>)
   
 idToChars :: Id -> String
 idToChars = intToChars . runId

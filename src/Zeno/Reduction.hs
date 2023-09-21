@@ -62,21 +62,23 @@ instance Show a => Show (Reduction a) where
 -- It possibly creates new variables and takes a list of background facts.
 -- This reduction will always be iff.
 class Reducible a where
-  reduceM :: (IdCounter r, MonadReader [ZEquality] m, MonadState r m) => 
+  reduceM :: (IdCounter r, MonadReader [ZEquality] m, MonadState r m, MonadFail m) =>
     a -> m (Reduction a)
  
-reduce :: (Reducible a, IdCounter r, Monad m) => 
+reduce :: (Reducible a, IdCounter r, Monad m, MonadFail m) =>
   [ZEquality] -> a -> StateT r m (Reduction a)
 reduce facts = flip runReaderT facts . reduceM
+
+instance Semigroup (Reduction a) where
+  _ <> ReducedToFalse = ReducedToFalse
+  ReducedToFalse <> _ = ReducedToFalse
+  (ReducedTo xs) <> (ReducedTo ys) = ReducedTo (xs ++ ys)
 
 -- |This is the 'Monoid' of reductions under logical conjunction. 
 -- Think of 'mappend' as '(&&)' and 'mempty' as 'True'.
 instance Monoid (Reduction a) where
   mempty = ReducedTo []
-  
-  mappend _ ReducedToFalse = ReducedToFalse
-  mappend ReducedToFalse _ = ReducedToFalse
-  mappend (ReducedTo xs) (ReducedTo ys) = ReducedTo (xs ++ ys)
+  mappend = (<>)
 
 instance Reducible ZQuantified where
   reduceM (Quantified vars cls) = do
@@ -147,7 +149,7 @@ instance Reducible ZEquality where
     reduceM (x1' :=: x2')
   reduceM eq = reduceMFail eq
     
-reduceMFail :: (IdCounter c, MonadReader [ZEquality] m, MonadState c m) => 
+reduceMFail :: (IdCounter c, MonadReader [ZEquality] m, MonadState c m, MonadFail m) =>
   ZEquality -> m (Reduction ZEquality)
 reduceMFail eq@(x1 :=: x2) = do
   x1' <- evaluateR x1
