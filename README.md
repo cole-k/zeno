@@ -21,6 +21,8 @@ cabal build zeno
 cabal run zeno -- file [flags]
 ```
 
+Details about the `zeno` executable can be found by passing the `--help` flag.
+
 I recommend adding the `-I` flag unless you have Isabelle installed. I did
 not check that the 12-year-old Isabelle output is valid.
 
