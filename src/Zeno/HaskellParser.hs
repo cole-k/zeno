@@ -34,8 +34,8 @@ import qualified Coercion as Hs
 import qualified TidyPgm as Hs
 import qualified Digraph as Hs
 import qualified DataCon as Hs
-import qualified GHC as Hs
 import qualified Pair as Hs
+import Data.Maybe (fromJust)
 
 data HsEnv = HsEnv  { envVars :: Map (Either String Hs.Var) ZVar,
                       envTypes :: Map (Either String Hs.Type) ZType }
@@ -168,9 +168,9 @@ addBuiltInTypes = do
           bool_type (ConstructorVar False)
         bool_dtype = DataType bool_id "bool" [] [true_var, false_var]
         bool_type = VarType bool_dtype 
-    addEnvVar  (Left "GHC.Bool.True")  true_var
-    addEnvVar  (Left "GHC.Bool.False") false_var
-    addEnvType (Left "GHC.Bool.Bool") bool_type
+    addEnvVar  (Left "True")  true_var
+    addEnvVar  (Left "False") false_var
+    addEnvType (Left "Bool") bool_type
     lift $ addDataType bool_dtype                                      
         
   addListType :: HsZeno ()
@@ -185,8 +185,8 @@ addBuiltInTypes = do
         list_dtype = DataType list_id "list" [poly_id] [empty_var, cons_var]
         empty_var = ZVar empty_id (Just "[]") empty_type (ConstructorVar False)
         cons_var = ZVar cons_id (Just ":") cons_type (ConstructorVar True)
-    addEnvVar  (Left "GHC.Types.[]") empty_var
-    addEnvVar  (Left "GHC.Types.:")  cons_var
+    addEnvVar  (Left "[]") empty_var
+    addEnvVar  (Left ":")  cons_var
     addEnvType (Left "[]") list_type_fun
     lift $ addDataType list_dtype
               
@@ -202,7 +202,7 @@ addBuiltInTypes = do
         con_type = unflattenForAllType poly_vars 
                  $ unflattenFunType (poly_types ++ [ret_type])
         con_var = ZVar con_id (Just symbol) con_type (ConstructorVar False)
-    addEnvVar (Left $ "GHC.Tuple." ++ symbol) con_var
+    addEnvVar (Left $ "Tuple." ++ symbol) con_var
     (addEnvType (Left symbol) . VarType) con_dtype
     (lift . addDataType) con_dtype
 
@@ -210,16 +210,21 @@ addBuiltInTypes = do
   addErrorTypes = do
     fun_id <- lift newIdS
     rw_id <- lift newIdS
+    void_id <- lift newIdS
     poly_var <- lift newIdS
     let any_type = ForAllType poly_var (PolyVarType poly_var)
         fun_var = ZVar fun_id (Just "patternMatchError") any_type err_class
         rw_var = ZVar rw_id (Just "realWorld#") any_type err_class
+        void_var = ZVar void_id (Just "void#") any_type err_class
         err_class = DefinedVar (Just Err) False
-    addEnvType (Left "GHC.Prim.Addr#") any_type
-    addEnvType (Left "GHC.Prim.State#") any_type
-    addEnvType (Left "GHC.Prim.RealWorld") any_type
-    addEnvVar (Left "GHC.Prim.realWorld#") rw_var
-    addEnvVar (Left "Control.Exception.Base.patError") fun_var
+    addEnvType (Left "Addr#") any_type
+    addEnvType (Left "State#") any_type
+    addEnvType (Left "RealWorld") any_type
+    -- This really should be the empty type, but whatever
+    addEnvType (Left "Void#") any_type
+    addEnvVar (Left "void#") void_var
+    addEnvVar (Left "realWorld#") rw_var
+    addEnvVar (Left "patError") fun_var
 
 addEnvVar :: Either String Hs.Var -> ZVar -> HsZeno ()
 addEnvVar var zvar = modify $ \env -> 
@@ -243,10 +248,10 @@ lookupTypeId hs_type = do
     Nothing -> 
       case Map.lookup (Left $ output hs_type) types of
         Just ztype -> return ztype
-        Nothing -> mzero 
-        {- error 
-          $ "Zeno representation for type not found: " ++ output hs_type -}
-    
+        Nothing -> mzero
+          -- error
+          --   $ "Zeno representation for type not found: " ++ output hs_type
+
 lookupVar :: Hs.Var -> HsZeno ZVar 
 lookupVar hs_var = do
   vars <- envVars <$> get
@@ -255,7 +260,14 @@ lookupVar hs_var = do
     Nothing -> 
       case Map.lookup (Left $ output hs_var) vars of
         Just var -> return var
-        Nothing -> error 
+        -- NOTE C.K. For debugging
+        -- Nothing -> do
+        --   let name = output hs_var
+        --   freshId <- lift newIdS
+        --   -- make a new void type
+        --   let tp = DataType freshId name [] []
+        --   return $ ZVar freshId (Just name) (VarType tp) (ConstructorVar False)
+        Nothing -> error
           $ "Zeno representation for variable not found: " ++ output hs_var
 
 -- TODO: Make this work for mutually recursive types 
@@ -296,16 +308,22 @@ convertCoreType hs_type = all_type
 
 convertTopLevelBindings :: HsBindings -> HsZeno ()
 convertTopLevelBindings hsbinds = do
+  -- NOTE C.K. This extra junk is because we need to put removeDollarBindPita8
+  -- before the call to convertBindings since convertBindings will fail for some
+  -- of the stuff that we filter using removeDollarBindPita8.
   binds <- id
-      . concatMap splitFakeRecs
-      . map evaluateBindings
-      . map (mapExpr simplify)
-      . removeTypeClassPita7
-      . removeTypeClassPita6
-      . mapExpr simplify
-      . mapWithin simplifyCases
-      
-    <$> convertBindings hsbinds
+      . fromMaybe []
+      . fmap (id
+        -- . map (\e -> trace (show e <> "\n") e)
+        . concatMap splitFakeRecs
+        . map evaluateBindings
+        . map (mapExpr simplify)
+        . removeTypeClassPita7
+        . removeTypeClassPita6
+        . mapExpr simplify
+        . mapWithin simplifyCases)
+    <$> traverse convertBindings (removeDollarBindPita8 hsbinds)
+    -- ((\bs -> trace (output bs <> "\n") $ removeDollarBindPita8 bs) hsbinds)
 
   let updateAll :: Functor f => [ZBindings] -> f ZVar -> f ZVar
       updateAll = foldl' (\f b -> f . updateDefinitions b) id
@@ -403,11 +421,18 @@ removeTypeClassPita7 bs@(Rec binds) =
     | "D:" `isInfixOf` show ex = True
   pitaBind _= False
 removeTypeClassPita7 bs = [bs]
+
+-- | Continuing the tradition of pitas past, this one removes bindings that have
+--   a `$` in front of them, many which seem to be related to modules and types.
+removeDollarBindPita8 :: HsBindings -> Maybe HsBindings
+-- Permit the definition of `$`
+removeDollarBindPita8 bs@(Hs.NonRec outerName _)
+  | '$':_:_ <- output outerName = Nothing
+removeDollarBindPita8 bs = Just bs
   
 convertBinds :: Bool -> [HsBinding] -> HsZeno [ZBinding]
 convertBinds rc (unzip -> (hsvars, hsexprs)) = do
   vars <- mapM (flip createHsEnvVar (DefinedVar Nothing rc)) hsvars
-  mapM_ (\e -> trace (output e) (pure ())) hsexprs
   exprs <- mapM convertExpr hsexprs
   return (vars `zip` exprs)
       

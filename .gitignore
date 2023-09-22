@@ -1,8 +1,10 @@
+# Defaults
 .DS_Store
 .idea
 *.log
 tmp/
 
+# Haskell
 dist
 dist-*
 cabal-dev
@@ -26,3 +28,6 @@ cabal.project.local
 cabal.project.local~
 .HTF/
 .ghc.environment.*
+
+# Zeno
+isa
